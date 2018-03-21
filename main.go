@@ -28,9 +28,6 @@ func (source cssFile) deepCopyCssFile() cssFile {
 }
 
 func mapContains(baseClasses map[string][]string, key string, value []string) bool {
-	//for key, value := range baseClasses {
-	//
-	//}
 	if names, ok := baseClasses[key]; ok {
 		return reflect.DeepEqual(names, value)
 	}
@@ -135,6 +132,20 @@ func extractCommonStyles(parsedFiles []cssFile, dir string) []cssFile {
 	return result
 }
 
+func loadDir(dir string) ([]os.FileInfo, error) {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("unable to open given directory - %s\n", err.Error())
+	}
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("unable to retrieve list of files in the %s diectory - %s\n", dir, err.Error())
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no files found in the %s directory\n", dir)
+	}
+	return files, nil
+}
+
 func main() {
 	// parse flags
 	dir := flag.String("dir", ".", "directory containing css files to refactor")
@@ -210,18 +221,4 @@ func main() {
 	}
 	save.closeSafe()
 	saveWG.Wait()
-}
-
-func loadDir(dir string) ([]os.FileInfo, error) {
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return nil, fmt.Errorf("unable to open given directory - %s\n", err.Error())
-	}
-	files, err := ioutil.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("unable to retrieve list of files in the %s diectory - %s\n", dir, err.Error())
-	}
-	if len(files) == 0 {
-		return nil, fmt.Errorf("no files found in the %s directory\n", dir)
-	}
-	return files, nil
 }
