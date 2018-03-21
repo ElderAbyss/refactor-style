@@ -72,6 +72,15 @@ func reduceCSS(fileName string, parsed *cssChannel) error {
 	if err != nil {
 		return fmt.Errorf("unable to read file %s - %s\n", fileName, err.Error())
 	}
+	hashCSS(rawText, cutSet, &parsedCSS)
+	parsedCSS.fileName = fileName
+	fmt.Printf("adding %s to the parsed chan\n", fileName)
+	parsed.c <- parsedCSS
+	return nil
+}
+
+
+func hashCSS(rawText []byte, cutSet string, parsedCSS *cssFile) {
 	textString := strings.Trim(string(rawText), cutSet)
 	for len(textString) > 0 {
 		leftBracket := strings.Index(textString, "{")
@@ -87,10 +96,6 @@ func reduceCSS(fileName string, parsed *cssChannel) error {
 		parsedCSS.classes[classDef] = append(parsedCSS.classes[classDef], classNames)
 		textString = strings.Trim(textString[rightBracket+1:], cutSet)
 	}
-	parsedCSS.fileName = fileName
-	fmt.Printf("adding %s to the parsed chan\n", fileName)
-	parsed.c <- parsedCSS
-	return nil
 }
 
 func saveCSS(file cssFile) error {
@@ -101,15 +106,15 @@ func saveCSS(file cssFile) error {
 		buf.WriteString(classDef)
 		buf.WriteString("}\n\n")
 	}
-	newFileName := file.fileName + ".new"
+	newFileName := file.fileName
 	fmt.Printf("processed %s and now saving to file %s\n", file.fileName, newFileName)
 	return ioutil.WriteFile(newFileName, buf.Bytes(), 0664)
 }
 
-func extractCommonStyles(parsedFiles []cssFile) []cssFile {
+func extractCommonStyles(parsedFiles []cssFile, dir string) []cssFile {
 	var result []cssFile
 	var refactored cssFile
-	refactored.fileName = "refactored.css"
+	refactored.fileName = dir + "/" + "refactored.css"
 	refactored.classes = map[string][]string{}
 	extractedFile := parsedFiles[0].deepCopyCssFile()
 	for key, value := range extractedFile.classes {
@@ -143,11 +148,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// parse of each file
 	var taskWG, saveWG sync.WaitGroup
 	task := newCssChannel()
 	parsed := newCssChannel()
 	save := newCssChannel()
+
+	// parse file workers
 	taskWG.Add(*maxWorkers)
 	for w := 0; w < *maxWorkers; w++ {
 		go func() {
@@ -163,6 +169,7 @@ func main() {
 		}()
 	}
 
+	//save files workers
 	saveWG.Add(*maxWorkers)
 	for w := 0; w < *maxWorkers; w++ {
 		go func() {
@@ -176,7 +183,7 @@ func main() {
 		}()
 	}
 
-	// process files
+	// locate target files
 	go func() {
 		for _, file := range files {
 			if strings.HasSuffix(strings.ToLower(file.Name()), ".css") {
@@ -188,14 +195,16 @@ func main() {
 		task.closeSafe()
 	}()
 
-	//taskWG.Wait()
+	// collect parsed files
 	parsedFiles := make([]cssFile, 0)
-	//for i := 0; i < cssCount; i++ {
 	for parsedFile := range parsed.c {
 		parsedFiles = append(parsedFiles, parsedFile)
 	}
+
+	// extract common css classes from across files.  need to fan back in here to process all subjects at once
 	fmt.Println("extracting common styles")
-	processedFiles := extractCommonStyles(parsedFiles)
+	processedFiles := extractCommonStyles(parsedFiles, *dir)
+
 	for _, completedFile := range processedFiles {
 		save.c <- completedFile
 	}
