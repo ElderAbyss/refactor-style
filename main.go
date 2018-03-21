@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -14,6 +15,38 @@ import (
 type cssFile struct {
 	fileName string
 	classes  map[string][]string
+}
+
+func deepCopyCssFile(source cssFile) cssFile {
+	extractedFile := source
+	extractedFile.classes = map[string][]string{}
+	for key, value := range source.classes {
+		extractedFile.classes[key] = make([]string, len(value))
+		copy(extractedFile.classes[key], value)
+	}
+	return extractedFile
+}
+
+func mapContains(baseClasses map[string][]string, key string, value []string) bool {
+	//for key, value := range baseClasses {
+	//
+	//}
+	if names, ok := baseClasses[key]; ok {
+		return reflect.DeepEqual(names, value)
+	}
+	return false
+}
+
+func filterFile(baseFile cssFile, filterFile cssFile) cssFile {
+	var result cssFile
+	result.fileName = baseFile.fileName
+	result.classes = make(map[string][]string, 0)
+	for key, value := range baseFile.classes {
+		if _, ok := filterFile.classes[key]; !ok {
+			result.classes[key] = value
+		}
+	}
+	return result
 }
 
 func reduceCSS(fileName string, parsed chan cssFile) error {
@@ -58,6 +91,30 @@ func saveCSS(file cssFile) error {
 	return ioutil.WriteFile(newFileName, buf.Bytes(), 0664)
 }
 
+func extractCommonStyles(parsedFiles []cssFile) []cssFile {
+	var result []cssFile
+	var refactored cssFile
+	refactored.fileName = "refactored.css"
+	refactored.classes = map[string][]string{}
+	extractedFile := deepCopyCssFile(parsedFiles[0])
+	for key, value := range extractedFile.classes {
+		extracting := true
+		for i := 0; i < len(parsedFiles); i++ {
+			if extracting {
+				extracting = mapContains(parsedFiles[i].classes, key, value)
+			}
+		}
+		if extracting {
+			refactored.classes[key] = value
+		}
+	}
+	result = append(result, refactored)
+	for _, unfactoredFile := range parsedFiles {
+		result = append(result, filterFile(unfactoredFile, refactored))
+	}
+	return result
+}
+
 func main() {
 	// parse flags
 	dir := flag.String("dir", ".", "directory containing css files to refactor")
@@ -72,9 +129,10 @@ func main() {
 	}
 
 	// parse of each file
-	var taskWG, parsedWG sync.WaitGroup
+	var taskWG, saveWG sync.WaitGroup
 	task := make(chan string)
 	parsed := make(chan cssFile)
+	save := make(chan cssFile)
 	taskWG.Add(*maxWorkers)
 	for w := 0; w < *maxWorkers; w++ {
 		go func() {
@@ -88,11 +146,11 @@ func main() {
 		}()
 	}
 
-	parsedWG.Add(*maxWorkers)
+	saveWG.Add(*maxWorkers)
 	for w := 0; w < *maxWorkers; w++ {
 		go func() {
-			defer parsedWG.Done()
-			for cssFileData := range parsed {
+			defer saveWG.Done()
+			for cssFileData := range save {
 				myErr := saveCSS(cssFileData)
 				if myErr != nil {
 					fmt.Println(myErr.Error())
@@ -102,16 +160,30 @@ func main() {
 	}
 
 	// process files
-	for _, file := range files {
-		if strings.HasSuffix(strings.ToLower(file.Name()), ".css") {
-			fmt.Printf("%s added to target group\n", file.Name())
-			task <- *dir + "/" + file.Name()
+	cssCount := 0
+	go func() {
+		for _, file := range files {
+			if strings.HasSuffix(strings.ToLower(file.Name()), ".css") {
+				fmt.Printf("%s added to target group\n", file.Name())
+				cssCount++
+				task <- *dir + "/" + file.Name()
+			}
 		}
+		close(task)
+	}()
+	//taskWG.Wait()
+	parsedFiles := make([]cssFile,0)
+	for i := 0; i < cssCount; i++ {
+		parsedFiles = append(parsedFiles, <-parsed)
 	}
-	close(task)
-	taskWG.Wait()
 	close(parsed)
-	parsedWG.Wait()
+	fmt.Println("extracting common styles")
+	processedFiles := extractCommonStyles(parsedFiles)
+	for _, completedFile := range processedFiles {
+		save <- completedFile
+	}
+	close(save)
+	saveWG.Wait()
 }
 
 func loadDir(dir string) ([]os.FileInfo, error) {
