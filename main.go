@@ -76,7 +76,6 @@ func reduceCSS(fileName string, parsed *cssChannel) error {
 	return nil
 }
 
-
 func hashCSS(rawText []byte, cutSet string, parsedCSS *cssFile) {
 	textString := strings.Trim(string(rawText), cutSet)
 	for len(textString) > 0 {
@@ -111,8 +110,12 @@ func saveCSS(file cssFile) error {
 func extractCommonStyles(parsedFiles []cssFile, dir string) []cssFile {
 	var result []cssFile
 	var refactored cssFile
-	refactored.fileName = dir + "/" + "refactored.css"
+	refactored.fileName = dir + "refactored.css"
 	refactored.classes = map[string][]string{}
+	if len(parsedFiles) < 2 {
+		fmt.Println("not enough CSS files loaded and parsed from given directory to perform extract")
+		return result
+	}
 	extractedFile := parsedFiles[0].deepCopyCssFile()
 	for key, value := range extractedFile.classes {
 		extracting := true
@@ -159,6 +162,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if len(files) == 0 {
+		fmt.Println("no files in given directory")
+		os.Exit(0)
+	}
+
 	var taskWG, saveWG sync.WaitGroup
 	task := newCssChannel()
 	parsed := newCssChannel()
@@ -199,7 +207,7 @@ func main() {
 		for _, file := range files {
 			if strings.HasSuffix(strings.ToLower(file.Name()), ".css") {
 				fmt.Printf("%s added to target group\n", file.Name())
-				targetFile := cssFile{fileName: *dir + "/" + file.Name()}
+				targetFile := cssFile{fileName: *dir + file.Name()}
 				task.c <- targetFile
 			}
 		}
